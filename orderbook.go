@@ -25,13 +25,7 @@ func NewOrderBook() *OrderBook {
 	}
 }
 
-// PriceLevel contains price and volume in depth
-type PriceLevel struct {
-	Price    decimal.Decimal `json:"price"`
-	Quantity decimal.Decimal `json:"quantity"`
-}
-
-// ProcessMarketOrder immediately gets definite quantity from the order book with market price
+// ProcessMarketQuantityOrder immediately gets definite quantity from the order book with market price
 // Arguments:
 //      side     - what do you want to do (ob.Sell or ob.Buy)
 //      quantity - how much quantity you want to sell or buy
@@ -44,9 +38,9 @@ type PriceLevel struct {
 //      partial      - not nil if your order has done but top order is not fully done
 //      partialQuantityProcessed - if partial order is not nil this result contains processed quatity from partial order
 //      quantityLeft - more than zero if it is not enought orders to process all quantity
-func (ob *OrderBook) ProcessMarketOrder(side Side, quantity decimal.Decimal) (done []*Order, partial *Order, partialQuantityProcessed, quantityLeft decimal.Decimal, err error) {
+func (ob *OrderBook) ProcessMarketQuantityOrder(side Side, quantity decimal.Decimal) (done []*Order, partial *Order, partialQuantityProcessed, quantityLeft decimal.Decimal, rollback func(), err error) {
 	if quantity.Sign() <= 0 {
-		return nil, nil, decimal.Zero, decimal.Zero, ErrInvalidQuantity
+		return nil, nil, decimal.Zero, decimal.Zero, nil, ErrInvalidQuantity
 	}
 
 	var (
@@ -62,16 +56,84 @@ func (ob *OrderBook) ProcessMarketOrder(side Side, quantity decimal.Decimal) (do
 		sideToProcess = ob.bids
 	}
 
+	var rollbackPartial func()
 	for quantity.Sign() > 0 && sideToProcess.Len() > 0 {
 		bestPrice := iter()
-		ordersDone, partialDone, partialProcessed, quantityLeft := ob.processQueue(bestPrice, quantity)
+		ordersDone, partialDone, partialProcessed, quantityLeft, rollbackPart := ob.processQueue(bestPrice, quantity)
 		done = append(done, ordersDone...)
 		partial = partialDone
 		partialQuantityProcessed = partialProcessed
 		quantity = quantityLeft
+		rollbackPartial = rollbackPart
 	}
+	var rollbackDone = done
 
 	quantityLeft = quantity
+
+	if rollbackPartial != nil || len(rollbackDone) > 0 {
+		rollback = func() {
+			if rollbackPartial != nil {
+				rollbackPartial()
+			}
+			for _, o := range rollbackDone {
+				ob.orders[o.ID()] = sideToProcess.Append(o)
+			}
+		}
+	}
+	return
+}
+
+// ProcessMarketPriceBuy immediately gets definite price from the order book with market price
+// Arguments:
+//      side     - what do you want to do (ob.Sell or ob.Buy)
+//      price	 - how much total price you want to buy
+//      * to create new decimal number you should use decimal.New() func
+//        read more at https://github.com/shopspring/decimal
+// Return:
+//      error        - not nil if price is less or equal 0
+//      done         - not nil if your market order produces ends of anoter orders, this order will add to
+//                     the "done" slice
+//      partial      - not nil if your order has done but top order is not fully done
+//      partialQuantityProcessed - if partial order is not nil this result contains processed quatity from partial order
+//      quantityLeft - more than zero if it is not enought orders to process all quantity
+func (ob *OrderBook) ProcessMarketPriceBuy(price decimal.Decimal, places int32) (done []*Order, partial *Order, partialQuantityProcessed, priceLeft decimal.Decimal, rollback func(), err error) {
+	if price.Sign() <= 0 {
+		return nil, nil, decimal.Zero, decimal.Zero, nil, ErrInvalidPrice
+	}
+
+	var (
+		iter          func() *OrderQueue
+		sideToProcess *OrderSide
+	)
+
+	iter = ob.asks.MinPriceQueue
+	sideToProcess = ob.asks
+
+	var rollbackPartial func()
+	for price.Sign() > 0 && sideToProcess.Len() > 0 {
+		bestPrice := iter()
+		quantity := price.DivRound(bestPrice.Price(), places)
+		ordersDone, partialDone, partialProcessed, quantityLeft, rollbackPart := ob.processQueue(bestPrice, quantity)
+		done = append(done, ordersDone...)
+		partial = partialDone
+		partialQuantityProcessed = partialProcessed
+		price = price.Sub(quantity.Sub(quantityLeft).Mul(bestPrice.price))
+		rollbackPartial = rollbackPart
+	}
+	var rollbackDone = done
+
+	priceLeft = price
+
+	if rollbackPartial != nil || len(rollbackDone) > 0 {
+		rollback = func() {
+			if rollbackPartial != nil {
+				rollbackPartial()
+			}
+			for _, o := range rollbackDone {
+				ob.orders[o.ID()] = sideToProcess.Append(o)
+			}
+		}
+	}
 	return
 }
 
@@ -91,17 +153,17 @@ func (ob *OrderBook) ProcessMarketOrder(side Side, quantity decimal.Decimal) (do
 //                partial done and placed to the orderbook without full quantity - partial will contain
 //                your order with quantity to left
 //      partialQuantityProcessed - if partial order is not nil this result contains processed quatity from partial order
-func (ob *OrderBook) ProcessLimitOrder(side Side, orderID string, quantity, price decimal.Decimal) (done []*Order, partial *Order, partialQuantityProcessed decimal.Decimal, err error) {
+func (ob *OrderBook) ProcessLimitOrder(side Side, orderID string, quantity, price decimal.Decimal) (done []*Order, partial *Order, partialQuantityProcessed decimal.Decimal, rollback func(), err error) {
 	if _, ok := ob.orders[orderID]; ok {
-		return nil, nil, decimal.Zero, ErrOrderExists
+		return nil, nil, decimal.Zero, nil, ErrOrderExists
 	}
 
 	if quantity.Sign() <= 0 {
-		return nil, nil, decimal.Zero, ErrInvalidQuantity
+		return nil, nil, decimal.Zero, nil, ErrInvalidQuantity
 	}
 
 	if price.Sign() <= 0 {
-		return nil, nil, decimal.Zero, ErrInvalidPrice
+		return nil, nil, decimal.Zero, nil, ErrInvalidPrice
 	}
 
 	quantityToTrade := quantity
@@ -125,14 +187,18 @@ func (ob *OrderBook) ProcessLimitOrder(side Side, orderID string, quantity, pric
 	}
 
 	bestPrice := iter()
+	var rollbackPartial func()
 	for quantityToTrade.Sign() > 0 && sideToProcess.Len() > 0 && comparator(bestPrice.Price()) {
-		ordersDone, partialDone, partialQty, quantityLeft := ob.processQueue(bestPrice, quantityToTrade)
+		ordersDone, partialDone, partialQty, quantityLeft, rollbackPart := ob.processQueue(bestPrice, quantityToTrade)
 		done = append(done, ordersDone...)
 		partial = partialDone
 		partialQuantityProcessed = partialQty
 		quantityToTrade = quantityLeft
 		bestPrice = iter()
+		rollbackPartial = rollbackPart
 	}
+	var rollbackDone = done
+	var rollbackCancel string
 
 	if quantityToTrade.Sign() > 0 {
 		o := NewOrder(orderID, side, quantityToTrade, price, time.Now().UTC())
@@ -141,6 +207,7 @@ func (ob *OrderBook) ProcessLimitOrder(side Side, orderID string, quantity, pric
 			partial = o
 		}
 		ob.orders[orderID] = sideToAdd.Append(o)
+		rollbackCancel = orderID
 	} else {
 		totalQuantity := decimal.Zero
 		totalPrice := decimal.Zero
@@ -157,10 +224,23 @@ func (ob *OrderBook) ProcessLimitOrder(side Side, orderID string, quantity, pric
 
 		done = append(done, NewOrder(orderID, side, quantity, totalPrice.Div(totalQuantity), time.Now().UTC()))
 	}
+	if len(rollbackCancel) > 0 || rollbackPartial != nil || len(rollbackDone) > 0 {
+		rollback = func() {
+			if len(rollbackCancel) > 0 {
+				ob.CancelOrder(rollbackCancel)
+			}
+			if rollbackPartial != nil {
+				rollbackPartial()
+			}
+			for _, o := range rollbackDone {
+				ob.orders[o.ID()] = sideToProcess.Append(o)
+			}
+		}
+	}
 	return
 }
 
-func (ob *OrderBook) processQueue(orderQueue *OrderQueue, quantityToTrade decimal.Decimal) (done []*Order, partial *Order, partialQuantityProcessed, quantityLeft decimal.Decimal) {
+func (ob *OrderBook) processQueue(orderQueue *OrderQueue, quantityToTrade decimal.Decimal) (done []*Order, partial *Order, partialQuantityProcessed, quantityLeft decimal.Decimal, rollbackPartial func()) {
 	quantityLeft = quantityToTrade
 
 	for orderQueue.Len() > 0 && quantityLeft.Sign() > 0 {
@@ -172,6 +252,7 @@ func (ob *OrderBook) processQueue(orderQueue *OrderQueue, quantityToTrade decima
 			partialQuantityProcessed = quantityLeft
 			orderQueue.Update(headOrderEl, partial)
 			quantityLeft = decimal.Zero
+			rollbackPartial = func() { orderQueue.Update(headOrderEl, headOrder) }
 		} else {
 			quantityLeft = quantityLeft.Sub(headOrder.Quantity())
 			done = append(done, ob.CancelOrder(headOrder.ID()))
@@ -191,24 +272,42 @@ func (ob *OrderBook) Order(orderID string) *Order {
 	return e.Value.(*Order)
 }
 
+type Depth struct {
+	Bids [][]decimal.Decimal `json:"bids"`
+	Asks [][]decimal.Decimal `json:"asks"`
+}
+
+func (d *Depth) String() string {
+	data, _ := json.Marshal(d)
+	return string(data)
+}
+
 // Depth returns price levels and volume at price level
-func (ob *OrderBook) Depth() (asks, bids []*PriceLevel) {
+func (ob *OrderBook) Depth(max int) (depth *Depth) {
+	depth = &Depth{}
+
 	level := ob.asks.MaxPriceQueue()
 	for level != nil {
-		asks = append(asks, &PriceLevel{
-			Price:    level.Price(),
-			Quantity: level.Volume(),
+		depth.Asks = append(depth.Asks, []decimal.Decimal{
+			level.Price(),
+			level.Volume(),
 		})
 		level = ob.asks.LessThan(level.Price())
+		if max > 0 && len(depth.Asks) >= max {
+			break
+		}
 	}
 
 	level = ob.bids.MaxPriceQueue()
 	for level != nil {
-		bids = append(bids, &PriceLevel{
-			Price:    level.Price(),
-			Quantity: level.Volume(),
+		depth.Bids = append(depth.Bids, []decimal.Decimal{
+			level.Price(),
+			level.Volume(),
 		})
 		level = ob.bids.LessThan(level.Price())
+		if max > 0 && len(depth.Asks) >= max {
+			break
+		}
 	}
 	return
 }

@@ -17,15 +17,13 @@ func addDepth(ob *OrderBook, prefix string, quantity decimal.Decimal) {
 	for i := 100; i < 150; i = i + 10 {
 		ob.ProcessLimitOrder(Sell, fmt.Sprintf("%ssell-%d", prefix, i), quantity, decimal.New(int64(i), 0))
 	}
-
-	return
 }
 
 func TestLimitPlace(t *testing.T) {
 	ob := NewOrderBook()
 	quantity := decimal.New(2, 0)
 	for i := 50; i < 100; i = i + 10 {
-		done, partial, partialQty, err := ob.ProcessLimitOrder(Buy, fmt.Sprintf("buy-%d", i), quantity, decimal.New(int64(i), 0))
+		done, partial, partialQty, _, err := ob.ProcessLimitOrder(Buy, fmt.Sprintf("buy-%d", i), quantity, decimal.New(int64(i), 0))
 		if len(done) != 0 {
 			t.Fatal("OrderBook failed to process limit order (done is not empty)")
 		}
@@ -41,7 +39,7 @@ func TestLimitPlace(t *testing.T) {
 	}
 
 	for i := 100; i < 150; i = i + 10 {
-		done, partial, partialQty, err := ob.ProcessLimitOrder(Sell, fmt.Sprintf("sell-%d", i), quantity, decimal.New(int64(i), 0))
+		done, partial, partialQty, _, err := ob.ProcessLimitOrder(Sell, fmt.Sprintf("sell-%d", i), quantity, decimal.New(int64(i), 0))
 		if len(done) != 0 {
 			t.Fatal("OrderBook failed to process limit order (done is not empty)")
 		}
@@ -66,15 +64,14 @@ func TestLimitPlace(t *testing.T) {
 		t.Fatal("can't get real order")
 	}
 
-	t.Log(ob.Depth())
-	return
+	t.Log(ob.Depth(1))
 }
 
 func TestLimitProcess(t *testing.T) {
 	ob := NewOrderBook()
 	addDepth(ob, "", decimal.New(2, 0))
 
-	done, partial, partialQty, err := ob.ProcessLimitOrder(Buy, "order-b100", decimal.New(1, 0), decimal.New(100, 0))
+	done, partial, partialQty, _, err := ob.ProcessLimitOrder(Buy, "order-b100", decimal.New(1, 0), decimal.New(100, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +92,7 @@ func TestLimitProcess(t *testing.T) {
 
 	t.Log(ob)
 
-	done, partial, partialQty, err = ob.ProcessLimitOrder(Buy, "order-b150", decimal.New(10, 0), decimal.New(150, 0))
+	done, partial, partialQty, _, err = ob.ProcessLimitOrder(Buy, "order-b150", decimal.New(10, 0), decimal.New(150, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,15 +113,15 @@ func TestLimitProcess(t *testing.T) {
 
 	t.Log(ob)
 
-	if _, _, _, err := ob.ProcessLimitOrder(Sell, "buy-70", decimal.New(11, 0), decimal.New(40, 0)); err == nil {
+	if _, _, _, _, err := ob.ProcessLimitOrder(Sell, "buy-70", decimal.New(11, 0), decimal.New(40, 0)); err == nil {
 		t.Fatal("Can add existing order")
 	}
 
-	if _, _, _, err := ob.ProcessLimitOrder(Sell, "fake-70", decimal.New(0, 0), decimal.New(40, 0)); err == nil {
+	if _, _, _, _, err := ob.ProcessLimitOrder(Sell, "fake-70", decimal.New(0, 0), decimal.New(40, 0)); err == nil {
 		t.Fatal("Can add empty quantity order")
 	}
 
-	if _, _, _, err := ob.ProcessLimitOrder(Sell, "fake-70", decimal.New(10, 0), decimal.New(0, 0)); err == nil {
+	if _, _, _, _, err := ob.ProcessLimitOrder(Sell, "fake-70", decimal.New(10, 0), decimal.New(0, 0)); err == nil {
 		t.Fatal("Can add zero price")
 	}
 
@@ -132,7 +129,7 @@ func TestLimitProcess(t *testing.T) {
 		t.Fatal("Can cancel done order")
 	}
 
-	done, partial, partialQty, err = ob.ProcessLimitOrder(Sell, "order-s40", decimal.New(11, 0), decimal.New(40, 0))
+	done, partial, partialQty, _, err = ob.ProcessLimitOrder(Sell, "order-s40", decimal.New(11, 0), decimal.New(40, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,11 +150,11 @@ func TestLimitProcess(t *testing.T) {
 	t.Log(ob)
 }
 
-func TestMarketProcess(t *testing.T) {
+func TestMarketOrderProcess(t *testing.T) {
 	ob := NewOrderBook()
 	addDepth(ob, "", decimal.New(2, 0))
 
-	done, partial, partialQty, left, err := ob.ProcessMarketOrder(Buy, decimal.New(3, 0))
+	done, partial, partialQty, left, _, err := ob.ProcessMarketQuantityOrder(Buy, decimal.New(3, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +171,11 @@ func TestMarketProcess(t *testing.T) {
 	t.Log("Partial", partial)
 	t.Log(ob)
 
-	if _, _, _, _, err := ob.ProcessMarketOrder(Buy, decimal.New(0, 0)); err == nil {
+	if _, _, _, _, _, err := ob.ProcessMarketQuantityOrder(Buy, decimal.New(0, 0)); err == nil {
 		t.Fatal("Can add zero quantity order")
 	}
 
-	done, partial, partialQty, left, err = ob.ProcessMarketOrder(Sell, decimal.New(12, 0))
+	done, partial, partialQty, left, _, err = ob.ProcessMarketQuantityOrder(Sell, decimal.New(12, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +230,33 @@ func TestOrderBookJSON(t *testing.T) {
 	}
 }
 
+func TestMarketBuyProcess(t *testing.T) {
+	ob := NewOrderBook()
+
+	ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+	ob.ProcessMarketPriceBuy(decimal.NewFromFloat(0.1).Mul(decimal.NewFromFloat(0.01)), 8)
+	depth := ob.Depth(0)
+	if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+		t.Errorf("%v", depth)
+		return
+	}
+
+	ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
+	ob.ProcessMarketPriceBuy(decimal.NewFromFloat(0.1).Mul(decimal.NewFromFloat(0.01)), 8)
+	ob.ProcessMarketPriceBuy(decimal.NewFromFloat(0.1).Mul(decimal.NewFromFloat(0.01)), 8)
+	depth = ob.Depth(0)
+	if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+		t.Errorf("%v", depth)
+		return
+	}
+
+	_, _, _, _, _, err := ob.ProcessMarketPriceBuy(decimal.Zero, 8)
+	if err == nil {
+		t.Error(err)
+		return
+	}
+}
+
 func TestPriceCalculation(t *testing.T) {
 	ob := NewOrderBook()
 	addDepth(ob, "05-", decimal.New(10, 0))
@@ -279,6 +303,289 @@ func TestPriceCalculation(t *testing.T) {
 	}
 }
 
+func TestMarketOrderRollback(t *testing.T) {
+	ob := NewOrderBook()
+	{ //buy sell rollback
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, _, rollback2, _ := ob.ProcessMarketQuantityOrder(Sell, decimal.NewFromFloat(0.1))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //sell buy rollback
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, _, rollback2, _ := ob.ProcessMarketQuantityOrder(Buy, decimal.NewFromFloat(0.1))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //buy sell rollback, buy partial
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
+		_, _, _, _, rollback2, _ := ob.ProcessMarketQuantityOrder(Sell, decimal.NewFromFloat(0.1))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //buy sell rollback, sell partial
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, _, rollback2, _ := ob.ProcessMarketQuantityOrder(Sell, decimal.NewFromFloat(0.2))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+}
+
+func TestMarketBuyRollback(t *testing.T) {
+	ob := NewOrderBook()
+	{ //buy all
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, _, rollback2, _ := ob.ProcessMarketPriceBuy(decimal.NewFromFloat(0.1).Mul(decimal.NewFromFloat(0.01)), 8)
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //buy partial
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
+		_, _, _, _, rollback2, _ := ob.ProcessMarketPriceBuy(decimal.NewFromFloat(0.1).Mul(decimal.NewFromFloat(0.01)), 8)
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		_, _, _, _, rollback3, _ := ob.ProcessMarketPriceBuy(decimal.NewFromFloat(0.1).Mul(decimal.NewFromFloat(0.01)), 8)
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback3()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+}
+
+func TestLimitRollback(t *testing.T) {
+	ob := NewOrderBook()
+	{ //buy rollback
+		_, _, _, rollback, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //sell rollback
+		_, _, _, rollback, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //buy sell rollback
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, rollback2, _ := ob.ProcessLimitOrder(Sell, "o-002", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //sell buy rollback
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, rollback2, _ := ob.ProcessLimitOrder(Buy, "o-002", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //buy sell rollback, sell partial
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, rollback2, _ := ob.ProcessLimitOrder(Sell, "o-002", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //sell buy rollback, sell partial
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
+		_, _, _, rollback2, _ := ob.ProcessLimitOrder(Buy, "o-002", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //sell buy rollback, buy partial
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		_, _, _, rollback2, _ := ob.ProcessLimitOrder(Buy, "o-002", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+}
+
 func BenchmarkLimitOrder(b *testing.B) {
 	ob := NewOrderBook()
 	stopwatch := time.Now()
@@ -287,7 +594,7 @@ func BenchmarkLimitOrder(b *testing.B) {
 		addDepth(ob, "10-", decimal.New(10, 0))                                           // 10 ts
 		addDepth(ob, "15-", decimal.New(10, 0))                                           // 10 ts
 		ob.ProcessLimitOrder(Buy, "order-b150", decimal.New(160, 0), decimal.New(150, 0)) // 1 ts
-		ob.ProcessMarketOrder(Sell, decimal.New(200, 0))                                  // 1 ts = total 32
+		ob.ProcessMarketQuantityOrder(Sell, decimal.New(200, 0))                          // 1 ts = total 32
 	}
 	elapsed := time.Since(stopwatch)
 	fmt.Printf("\n\nElapsed: %s\nTransactions per second (avg): %f\n", elapsed, float64(b.N*32)/elapsed.Seconds())
