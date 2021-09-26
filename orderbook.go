@@ -255,7 +255,7 @@ func (ob *OrderBook) processQueue(orderQueue *OrderQueue, quantityToTrade decima
 			rollbackPartial = func() { orderQueue.Update(headOrderEl, headOrder) }
 		} else {
 			quantityLeft = quantityLeft.Sub(headOrder.Quantity())
-			done = append(done, ob.CancelOrder(headOrder.ID()))
+			done = append(done, ob.cancelOrder(headOrder.ID()))
 		}
 	}
 
@@ -313,7 +313,22 @@ func (ob *OrderBook) Depth(max int) (depth *Depth) {
 }
 
 // CancelOrder removes order with given ID from the order book
-func (ob *OrderBook) CancelOrder(orderID string) *Order {
+func (ob *OrderBook) CancelOrder(orderID string) (order *Order, rollback func()) {
+	order = ob.cancelOrder(orderID)
+	if order == nil {
+		return
+	}
+	rollback = func() {
+		if order.Side() == Buy {
+			ob.orders[order.ID()] = ob.bids.Append(order)
+		} else {
+			ob.orders[order.ID()] = ob.asks.Append(order)
+		}
+	}
+	return
+}
+
+func (ob *OrderBook) cancelOrder(orderID string) (order *Order) {
 	e, ok := ob.orders[orderID]
 	if !ok {
 		return nil

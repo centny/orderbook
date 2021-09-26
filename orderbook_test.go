@@ -125,7 +125,7 @@ func TestLimitProcess(t *testing.T) {
 		t.Fatal("Can add zero price")
 	}
 
-	if o := ob.CancelOrder("order-b100"); o != nil {
+	if o, _ := ob.CancelOrder("order-b100"); o != nil {
 		t.Fatal("Can cancel done order")
 	}
 
@@ -568,6 +568,62 @@ func TestLimitRollback(t *testing.T) {
 		_, _, _, rollback2, _ := ob.ProcessLimitOrder(Buy, "o-002", decimal.NewFromFloat(0.2), decimal.NewFromFloat(0.01))
 		depth := ob.Depth(0)
 		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+}
+
+func TestCancelRollback(t *testing.T) {
+	ob := NewOrderBook()
+	{ //buy cancel rollback
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Buy, "o-001", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		_, rollback2 := ob.CancelOrder("o-001")
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback2()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 1 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+		rollback1()
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
+			t.Errorf("%v", depth)
+			return
+		}
+	}
+	{ //sell cancel rollback
+		_, _, _, rollback1, _ := ob.ProcessLimitOrder(Sell, "o-002", decimal.NewFromFloat(0.1), decimal.NewFromFloat(0.01))
+		depth := ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 1 {
+			t.Errorf("%v", depth)
+			return
+		}
+		_, rollback2 := ob.CancelOrder("o-002")
+		depth = ob.Depth(0)
+		if len(depth.Bids) != 0 || len(depth.Asks) != 0 {
 			t.Errorf("%v", depth)
 			return
 		}
