@@ -305,7 +305,7 @@ func (ob *OrderBook) Depth(max int) (depth *Depth) {
 			level.Volume(),
 		})
 		level = ob.bids.LessThan(level.Price())
-		if max > 0 && len(depth.Asks) >= max {
+		if max > 0 && len(depth.Bids) >= max {
 			break
 		}
 	}
