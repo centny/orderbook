@@ -286,13 +286,13 @@ func (d *Depth) String() string {
 func (ob *OrderBook) Depth(max int) (depth *Depth) {
 	depth = &Depth{}
 
-	level := ob.asks.MaxPriceQueue()
+	level := ob.asks.MinPriceQueue()
 	for level != nil {
 		depth.Asks = append(depth.Asks, []decimal.Decimal{
 			level.Price(),
 			level.Volume(),
 		})
-		level = ob.asks.LessThan(level.Price())
+		level = ob.asks.GreaterThan(level.Price())
 		if max > 0 && len(depth.Asks) >= max {
 			break
 		}
