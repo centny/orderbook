@@ -113,6 +113,9 @@ func (ob *OrderBook) ProcessMarketPriceBuy(price decimal.Decimal, places int32) 
 	for price.Sign() > 0 && sideToProcess.Len() > 0 {
 		bestPrice := iter()
 		quantity := price.DivRound(bestPrice.Price(), places)
+		if quantity.Sign() <= 0 {
+			break
+		}
 		ordersDone, partialDone, partialProcessed, quantityLeft, rollbackPart := ob.processQueue(bestPrice, quantity)
 		done = append(done, ordersDone...)
 		partial = partialDone
